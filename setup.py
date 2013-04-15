@@ -17,7 +17,7 @@ tests_require = [
 ]
 
 install_requires = [
-    'sentry>=5.0.0',
+    'sentry>5.4.5',
     'pyvotal',
 ]
 

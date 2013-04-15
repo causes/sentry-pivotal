@@ -9,7 +9,7 @@ sentry_pivotal.plugin
 from django import forms
 from django.utils.html import mark_safe
 from django.utils.translation import ugettext_lazy as _
-from sentry.plugins.bases.issue import IssuePlugin
+from sentry.plugins.bases.issue import IssuePlugin, NewIssueForm
 
 import pyvotal
 import sentry_pivotal
@@ -19,9 +19,9 @@ class PivotalTrackerOptionsForm(forms.Form):
     token = forms.CharField(label=_('API Token'),
         widget=forms.TextInput(attrs={'class': 'span3', 'placeholder': 'e.g. a9877d72b6d13b23410a7109b35e88bc'}),
         help_text=mark_safe(_('Enter your API Token (found on %s).') % ('<a href="https://www.pivotaltracker.com/profile">pivotaltracker.com/profile</a>',)))
-    project = forms.IntegerField(label=_('Project ID'),
+    project = forms.IntegerField(label=_('Project ID'), required=False,
         widget=forms.TextInput(attrs={'class': 'span3', 'placeholder': 'e.g. 639281'}),
-        help_text=_('Enter your project\'s numerical ID.'))
+        help_text=_('Enter your project\'s numerical ID. Leave blank to allow selecting from a dropdown.'))
 
 
 class PivotalTrackerPlugin(IssuePlugin):
@@ -41,13 +41,23 @@ class PivotalTrackerPlugin(IssuePlugin):
     project_conf_form = PivotalTrackerOptionsForm
 
     def is_configured(self, request, project, **kwargs):
-        return all(self.get_option(k, project) for k in ('token', 'project'))
+        return bool(self.get_option('token', project))
 
     def get_new_issue_title(self, **kwargs):
         return 'Add Story'
 
     def get_api_client(self, project):
         return pyvotal.PTracker(token=self.get_option('token', project))
+
+    def get_new_issue_form(self, request, group, *args, **kwargs):
+        form = super(PivotalTrackerPlugin, self).get_new_issue_form(request, group, *args, **kwargs)
+
+        if not self.get_option('project', group.project):
+            projects = self.get_api_client(group.project).projects.all()
+            choices = [(p.id, p.name) for p in projects]
+            form.fields['project'] = forms.ChoiceField(choices=choices)
+
+        return form
 
     def create_issue(self, request, group, form_data, **kwargs):
         client = self.get_api_client(group.project)
@@ -59,7 +69,8 @@ class PivotalTrackerPlugin(IssuePlugin):
         story.labels = "sentry"
 
         try:
-            project = client.projects.get(self.get_option('project', group.project))
+            project_id = self.get_option('project', group.project) or form_data['project']
+            project = client.projects.get(project_id)
             story = project.stories.add(story)
         except Exception, e:
             raise forms.ValidationError(_('Error communicating with Pivotal Tracker: %s') % (unicode(e),))
@@ -70,6 +81,4 @@ class PivotalTrackerPlugin(IssuePlugin):
         return '#%s' % issue_id
 
     def get_issue_url(self, group, issue_id, **kwargs):
-        project = self.get_option('project', group.project)
-
-        return 'https://www.pivotaltracker.com/projects/%s#!/stories/%s' % (project, issue_id)
+        return 'https://www.pivotaltracker.com/story/show/%s' % issue_id
